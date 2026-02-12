@@ -6,7 +6,7 @@ import * as completions from 'groq-sdk/resources/chat/completions'
 const sendPrompt = async () => {
     const chatCompletion = await groq.chat.completions.create({
         messages,
-        model: 'llama-3.1-8b-instant',
+        model: model,
         temperature: 1,
         max_completion_tokens: 2048,
         top_p: 1,
@@ -28,6 +28,7 @@ const sendPrompt = async () => {
 
 const apiKey = (await readFile(`${process.env.XDG_CONFIG_HOME}/llmcli/key`)).toString().trim()
 const systemInstructions = (await readFile(`${process.env.XDG_CONFIG_HOME}/llmcli/instructions.md`)).toString().trim()
+const model = 'llama-3.1-8b-instant'
 
 const messages: completions.ChatCompletionMessageParam[] = [{ role: 'system', content: systemInstructions }]
 const groq = new Groq({ apiKey })
@@ -40,6 +41,7 @@ process.stdin.on('data', buf => {
     lastKey = buf[buf.length - 1]
 })
 
+console.info(`llmcli | ${model}`)
 let prompt = ''
 start({
     prompt: '> ',

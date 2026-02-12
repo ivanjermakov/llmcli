@@ -1,2 +1,4 @@
 #!/usr/bin/env sh
-node ./llmcli.ts
+
+dir=$(dirname $(readlink -f $0))
+node $dir/llmcli.ts
