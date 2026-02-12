@@ -34,10 +34,12 @@ const messages: completions.ChatCompletionMessageParam[] = [{ role: 'system', co
 const groq = new Groq({ apiKey })
 
 let lastKey = 0
+let paste = false
 process.stdin.setRawMode(true)
 process.stdin.resume()
 process.stdin.on('data', buf => {
     if (typeof buf === 'string') return
+    paste = buf.length > 1
     lastKey = buf[buf.length - 1]
 })
 
@@ -49,7 +51,7 @@ start({
     eval: async (cmd, _context, _filename, callback) => {
         setTimeout(async () => {
             prompt += cmd
-            if (lastKey === 0x0a) return Recoverable
+            if (lastKey === 0x0a || paste) return Recoverable
 
             messages.push({ role: 'user', content: prompt })
             await sendPrompt()
