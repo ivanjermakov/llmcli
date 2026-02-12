@@ -40,7 +40,7 @@ const sendPrompt = async () => {
 
 const apiKey = (await readFile(`${process.env.XDG_CONFIG_HOME}/llmcli/key`)).toString().trim()
 const systemInstructions = (await readFile(`${process.env.XDG_CONFIG_HOME}/llmcli/instructions.md`)).toString().trim()
-const model = 'llama-3.1-8b-instant'
+const model = 'openai/gpt-oss-120b'
 
 const messages: completions.ChatCompletionMessageParam[] = [{ role: 'system', content: systemInstructions }]
 const groq = new Groq({ apiKey })
@@ -75,7 +75,13 @@ process.stdin.on('data', async buf => {
     }
 })
 
-console.info(`llmcli | ${model}`)
+process.stdout.write(`\
+${model} \
+${color.cyan}^D${color.reset} quit \
+${color.cyan}^Q${color.reset} !reset \
+${color.cyan}^A${color.reset} !again \
+${color.cyan}^N${color.reset} !next
+`)
 let prompt = ''
 const server = start({
     prompt: `> ${color.cyan}`,
