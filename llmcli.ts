@@ -3,6 +3,18 @@ import { readFile } from 'fs/promises'
 import Groq from 'groq-sdk'
 import * as completions from 'groq-sdk/resources/chat/completions'
 
+const color = {
+    black: `\x1b[30m`,
+    red: `\x1b[31m`,
+    green: `\x1b[32m`,
+    yellow: `\x1b[33m`,
+    blue: `\x1b[34m`,
+    magenta: `\x1b[35m`,
+    cyan: `\x1b[36m`,
+    white: `\x1b[37m`,
+    reset: '\x1b[0m'
+}
+
 const sendPrompt = async () => {
     const chatCompletion = await groq.chat.completions.create({
         messages,
@@ -46,13 +58,14 @@ process.stdin.on('data', buf => {
 console.info(`llmcli | ${model}`)
 let prompt = ''
 start({
-    prompt: '> ',
+    prompt: `> ${color.cyan}`,
     ignoreUndefined: true,
     eval: async (cmd, _context, _filename, callback) => {
         setTimeout(async () => {
             prompt += cmd
             if (lastKey === 0x0a || paste) return Recoverable
 
+            process.stdout.write(color.reset)
             messages.push({ role: 'user', content: prompt })
             await sendPrompt()
             callback(null, undefined)
