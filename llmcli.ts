@@ -49,15 +49,35 @@ let lastKey = 0
 let paste = false
 process.stdin.setRawMode(true)
 process.stdin.resume()
-process.stdin.on('data', buf => {
+process.stdin.on('data', async buf => {
     if (typeof buf === 'string') return
     paste = buf.length > 1
     lastKey = buf[buf.length - 1]
+    switch (buf.length === 1 && lastKey) {
+        case 0x11: {
+            // ^Q
+            process.stdout.write(color.red)
+            server.write('!reset\n')
+            break
+        }
+        case 0x01: {
+            // ^A
+            process.stdout.write(color.red)
+            server.write('!again\n')
+            break
+        }
+        case 0x0e: {
+            // ^N
+            process.stdout.write(color.red)
+            server.write('!next\n')
+            break
+        }
+    }
 })
 
 console.info(`llmcli | ${model}`)
 let prompt = ''
-start({
+const server = start({
     prompt: `> ${color.cyan}`,
     ignoreUndefined: true,
     eval: async (cmd, _context, _filename, callback) => {
@@ -66,8 +86,19 @@ start({
             if (lastKey === 0x0a || paste) return Recoverable
 
             process.stdout.write(color.reset)
-            messages.push({ role: 'user', content: prompt })
-            await sendPrompt()
+            if (prompt.startsWith('!again')) {
+                messages.push({ role: 'user', content: 'give me alternative answer' })
+                await sendPrompt()
+            } else if (prompt.startsWith('!reset')) {
+                messages.splice(1)
+            } else if (prompt.startsWith('!next')) {
+                messages.push({ role: 'user', content: 'continue' })
+                await sendPrompt()
+            } else {
+                messages.push({ role: 'user', content: prompt })
+                await sendPrompt()
+            }
+
             callback(null, undefined)
             prompt = ''
             return undefined
