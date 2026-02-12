@@ -1,0 +1,16 @@
+{
+    "name": "llmcli",
+    "version": "0.0.1",
+    "description": "REPL for interacting with LLMs from the terminal based on Groq SDK",
+    "main": "llmcli",
+    "type": "module",
+    "scripts": {
+        "start": "node llmcli.ts"
+    },
+    "dependencies": {
+        "groq-sdk": "0.37.0"
+    },
+    "devDependencies": {
+        "@types/node": "25.2.3"
+    }
+}
