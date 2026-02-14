@@ -1,3 +1,4 @@
+import { spawn } from 'child_process'
 import { Recoverable, start } from 'repl'
 import { readFile } from 'fs/promises'
 import Groq from 'groq-sdk'
@@ -27,13 +28,16 @@ const sendPrompt = async () => {
         response_format: { type: 'text' }
     })
 
+    const child = spawn('streamdown', [], { stdio: ['pipe', 'inherit', 'inherit'] })
     let response = ''
     for await (const completion of chatCompletion) {
         const chunk = completion.choices[0]?.delta?.content
         if (!chunk) continue
-        process.stdout.write(chunk)
         response += chunk
+        child.stdin.write(chunk)
     }
+    child.stdin.end()
+    await new Promise(d => child.on('exit', d))
     process.stdout.write('\n')
     messages.push({ role: 'assistant', content: response })
 }

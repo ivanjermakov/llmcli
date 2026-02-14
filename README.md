@@ -14,3 +14,8 @@ $ tree $XDG_CONFIG_HOME/llmcli
 
 `key` contains [Groq SDK API key](https://console.groq.com/keys),
 `instructions.md` is a system instructions to init each conversation with the model.
+
+## Credits
+
+- [Groq SDK](https://console.groq.com/docs)
+- [Streamdown](https://github.com/day50-dev/Streamdown)
