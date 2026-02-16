@@ -1,8 +1,9 @@
 import { spawn } from 'child_process'
-import { Recoverable, start } from 'repl'
+import { createInterface } from 'readline'
 import { readFile } from 'fs/promises'
 import Groq from 'groq-sdk'
 import * as completions from 'groq-sdk/resources/chat/completions'
+import { env, exit, stdin, stdout } from 'process'
 
 const color = {
     black: `\x1b[30m`,
@@ -17,15 +18,17 @@ const color = {
 }
 
 const sendPrompt = async () => {
+    stdout.write(color.reset)
     const chatCompletion = await groq.chat.completions.create({
         messages,
         model: model,
-        temperature: 1,
-        max_completion_tokens: 2048,
-        top_p: 1,
+        temperature: 0.6,
+        max_completion_tokens: 4096,
+        top_p: 0.95,
         stream: true,
-        stop: null,
-        response_format: { type: 'text' }
+        reasoning_effort: 'default',
+        include_reasoning: false,
+        stop: null
     })
 
     const child = spawn('streamdown', [], { stdio: ['pipe', 'inherit', 'inherit'] })
@@ -38,80 +41,80 @@ const sendPrompt = async () => {
     }
     child.stdin.end()
     await new Promise(d => child.on('exit', d))
-    process.stdout.write('\n')
+    stdout.write('\n')
     messages.push({ role: 'assistant', content: response })
 }
 
-const apiKey = (await readFile(`${process.env.XDG_CONFIG_HOME}/llmcli/key`)).toString().trim()
-const systemInstructions = (await readFile(`${process.env.XDG_CONFIG_HOME}/llmcli/instructions.md`)).toString().trim()
-const model = 'openai/gpt-oss-120b'
+const apiKey = (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/key`)).toString().trim()
+const systemInstructions = (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/instructions.md`)).toString().trim()
+/**
+ * model zoo @link https://docs.google.com/spreadsheets/d/1ykqh8Xi1sL7LKnJn6_rR58SbUAcoJKmVMg7mh_L6CCc/edit?usp=sharing
+ */
+const model = 'qwen/qwen3-32b'
 
 const messages: completions.ChatCompletionMessageParam[] = [{ role: 'system', content: systemInstructions }]
 const groq = new Groq({ apiKey })
 
-let lastKey = 0
-let paste = false
-process.stdin.setRawMode(true)
-process.stdin.resume()
-process.stdin.on('data', async buf => {
-    if (typeof buf === 'string') return
-    paste = buf.length > 1
-    lastKey = buf[buf.length - 1]
-    switch (buf.length === 1 && lastKey) {
-        case 0x11: {
-            // ^Q
-            process.stdout.write(color.red)
-            server.write('!reset\n')
-            break
-        }
-        case 0x01: {
-            // ^A
-            process.stdout.write(color.red)
-            server.write('!again\n')
-            break
-        }
-        case 0x0e: {
-            // ^N
-            process.stdout.write(color.red)
-            server.write('!next\n')
-            break
-        }
-    }
-})
-
-process.stdout.write(`\
+stdout.write(`\
 ${model} \
 ${color.cyan}^D${color.reset} quit \
 ${color.cyan}^Q${color.reset} !reset \
 ${color.cyan}^A${color.reset} !again \
 ${color.cyan}^N${color.reset} !next
 `)
+
+let chunk: Buffer
 let prompt = ''
-const server = start({
-    prompt: `> ${color.cyan}`,
-    ignoreUndefined: true,
-    eval: async (cmd, _context, _filename, callback) => {
-        setTimeout(async () => {
-            prompt += cmd
-            if (lastKey === 0x0a || paste) return Recoverable
 
-            process.stdout.write(color.reset)
-            if (prompt.startsWith('!again')) {
-                messages.push({ role: 'user', content: 'give me alternative answer' })
-                await sendPrompt()
-            } else if (prompt.startsWith('!reset')) {
-                messages.splice(1)
-            } else if (prompt.startsWith('!next')) {
-                messages.push({ role: 'user', content: 'continue' })
-                await sendPrompt()
-            } else {
-                messages.push({ role: 'user', content: prompt })
-                await sendPrompt()
-            }
-
-            callback(null, undefined)
+if (stdin.isTTY) stdin.setRawMode(true)
+stdin.on('data', async c => {
+    chunk = c as Buffer
+    switch (chunk.length === 1 && chunk[0]) {
+        case 0x11: {
+            // ^Q
+            messages.splice(1)
+            stdout.write(`${color.red}!reset${color.reset}\n`)
             prompt = ''
-            return undefined
-        })
+            rl.prompt()
+            break
+        }
+        case 0x01: {
+            // ^A
+            messages.push({ role: 'user', content: 'give me alternative answer' })
+            stdout.write(`${color.red}!again${color.reset}\n`)
+            prompt = ''
+            rl.prompt()
+            break
+        }
+        case 0x0e: {
+            // ^N
+            stdout.write(`${color.red}!next${color.reset}\n`)
+            prompt = ''
+            messages.push({ role: 'user', content: 'continue' })
+            await sendPrompt()
+            rl.prompt()
+            break
+        }
     }
 })
+
+const rl = createInterface({
+    input: stdin,
+    output: stdout,
+    prompt: `${color.cyan}> `
+})
+rl.on('line', line => {
+    setTimeout(async () => {
+        prompt += line + '\n'
+        if (chunk.length === 1 && chunk[0] === 0x0d) {
+            messages.push({ role: 'user', content: prompt })
+            await sendPrompt()
+            prompt = ''
+            rl.prompt()
+        }
+    })
+})
+rl.on('close', () => {
+    exit(0)
+})
+rl.prompt()
