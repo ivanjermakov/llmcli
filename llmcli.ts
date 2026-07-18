@@ -23,7 +23,7 @@ const sendPrompt = async () => {
         messages,
         model: model,
         temperature: 0.6,
-        max_completion_tokens: 4096,
+        max_completion_tokens: 1 << 12,
         top_p: 0.95,
         stream: true,
         reasoning_effort: 'default',
@@ -50,7 +50,7 @@ const systemInstructions = (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/instru
 /**
  * model zoo @link https://docs.google.com/spreadsheets/d/1ykqh8Xi1sL7LKnJn6_rR58SbUAcoJKmVMg7mh_L6CCc/edit?usp=sharing
  */
-const model = 'qwen/qwen3-32b'
+const model = 'qwen/qwen3.6-27b'
 
 const messages: completions.ChatCompletionMessageParam[] = [{ role: 'system', content: systemInstructions }]
 const groq = new Groq({ apiKey })
