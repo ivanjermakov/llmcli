@@ -44,15 +44,19 @@ const sendPrompt = async () => {
     messages.push({ role: 'assistant', content: response })
 }
 
-const apiKey = (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/ollama`)).toString().trim()
 const systemInstructions = (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/instructions.md`)).toString().trim()
-const model = 'gemma4:31b'
-
 const messages: Message[] = [{ role: 'system', content: systemInstructions }]
+
+const model = 'gemma4:31b'
 const client = new OpenAI({
     baseURL: 'https://ollama.com/v1',
-    apiKey: apiKey
+    apiKey: (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/ollama`)).toString().trim()
 })
+// const model = 'qwen/qwen3.8-27b'
+// const client = new OpenAI({
+//     baseURL: 'https://api.groq.com/openai/v1',
+//     apiKey: (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/groq`)).toString().trim()
+// })
 
 stdout.write(`\
 ${model} \
