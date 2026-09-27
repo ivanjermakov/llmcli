@@ -1,9 +1,14 @@
 import { spawn } from 'child_process'
 import { createInterface } from 'readline'
 import { readFile } from 'fs/promises'
-import Groq from 'groq-sdk'
-import * as completions from 'groq-sdk/resources/chat/completions'
+import { OpenAI } from 'openai'
+import type { ChatCompletionMessageParam } from 'openai/resources'
 import { env, exit, stdin, stdout } from 'process'
+
+type Message = {
+    role: string
+    content: string
+}
 
 const color = {
     black: `\x1b[30m`,
@@ -19,21 +24,15 @@ const color = {
 
 const sendPrompt = async () => {
     stdout.write(color.reset)
-    const chatCompletion = await groq.chat.completions.create({
-        messages,
-        model: model,
-        temperature: 0.6,
-        max_completion_tokens: 1 << 12,
-        top_p: 0.95,
-        stream: true,
-        reasoning_effort: 'default',
-        include_reasoning: false,
-        stop: null
+    const chatResponse = await client.chat.completions.create({
+        model,
+        messages: messages as ChatCompletionMessageParam[],
+        stream: true
     })
 
     const child = spawn('streamdown', [], { stdio: ['pipe', 'inherit', 'inherit'] })
     let response = ''
-    for await (const completion of chatCompletion) {
+    for await (const completion of chatResponse) {
         const chunk = completion.choices[0]?.delta?.content
         if (!chunk) continue
         response += chunk
@@ -45,15 +44,15 @@ const sendPrompt = async () => {
     messages.push({ role: 'assistant', content: response })
 }
 
-const apiKey = (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/key`)).toString().trim()
+const apiKey = (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/ollama`)).toString().trim()
 const systemInstructions = (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/instructions.md`)).toString().trim()
-/**
- * model zoo @link https://docs.google.com/spreadsheets/d/1ykqh8Xi1sL7LKnJn6_rR58SbUAcoJKmVMg7mh_L6CCc/edit?usp=sharing
- */
-const model = 'qwen/qwen3.6-27b'
+const model = 'gemma4:31b'
 
-const messages: completions.ChatCompletionMessageParam[] = [{ role: 'system', content: systemInstructions }]
-const groq = new Groq({ apiKey })
+const messages: Message[] = [{ role: 'system', content: systemInstructions }]
+const client = new OpenAI({
+    baseURL: 'https://ollama.com/v1',
+    apiKey: apiKey
+})
 
 stdout.write(`\
 ${model} \
