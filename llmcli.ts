@@ -1,6 +1,7 @@
 import {
     BoxRenderable,
     MarkdownRenderable,
+    RGBA,
     ScrollBoxRenderable,
     SyntaxStyle,
     TextRenderable,
@@ -19,7 +20,13 @@ type Message = {
 
 const sendPrompt = async () => {
     const message = new MarkdownRenderable(renderer, {
-        syntaxStyle: SyntaxStyle.fromStyles({}),
+        syntaxStyle: SyntaxStyle.fromStyles({
+            default: { fg: RGBA.fromIndex(7) },
+            keyword: { fg: RGBA.fromIndex(5) },
+            string: { fg: RGBA.fromIndex(2) },
+            comment: { fg: RGBA.fromIndex(8) },
+            number: { fg: RGBA.fromIndex(3) }
+        }),
         streaming: true,
         paddingBottom: 1
     })

@@ -8,8 +8,8 @@
         "start": "node llmcli.ts"
     },
     "dependencies": {
-        "@opentui/core": "^0.5.12",
-        "openai": "^7.23.0"
+        "@opentui/core": "0.5.12",
+        "openai": "7.23.0"
     },
     "devDependencies": {
         "@types/node": "25.2.3"
