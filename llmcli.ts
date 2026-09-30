@@ -70,8 +70,8 @@ const contentBox = new ScrollBoxRenderable(renderer, {
 })
 root.add(contentBox)
 renderer.keyInput.on('keypress', key => {
-    if (['h', 'j', 'k', 'l'].includes(key.name)) return
-    if (contentBox.handleKeyPress(key)) {
+    if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(key.name)) {
+        contentBox.handleKeyPress(key)
         key.preventDefault()
     }
 })
