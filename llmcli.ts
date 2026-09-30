@@ -1,46 +1,43 @@
-import { spawn } from 'child_process'
-import { createInterface } from 'readline'
+import {
+    BoxRenderable,
+    MarkdownRenderable,
+    ScrollBoxRenderable,
+    SyntaxStyle,
+    TextRenderable,
+    TextareaRenderable,
+    createCliRenderer
+} from '@opentui/core'
 import { readFile } from 'fs/promises'
 import { OpenAI } from 'openai'
 import type { ChatCompletionMessageParam } from 'openai/resources'
-import { env, exit, stdin, stdout } from 'process'
+import { env } from 'process'
 
 type Message = {
     role: string
     content: string
 }
 
-const color = {
-    black: `\x1b[30m`,
-    red: `\x1b[31m`,
-    green: `\x1b[32m`,
-    yellow: `\x1b[33m`,
-    blue: `\x1b[34m`,
-    magenta: `\x1b[35m`,
-    cyan: `\x1b[36m`,
-    white: `\x1b[37m`,
-    reset: '\x1b[0m'
-}
-
 const sendPrompt = async () => {
-    stdout.write(color.reset)
+    const message = new MarkdownRenderable(renderer, {
+        syntaxStyle: SyntaxStyle.fromStyles({}),
+        streaming: true,
+        paddingBottom: 1
+    })
+    contentBox.add(message)
+    let response = ''
+
     const chatResponse = await client.chat.completions.create({
         model,
         messages: messages as ChatCompletionMessageParam[],
         stream: true
     })
 
-    const child = spawn('streamdown', [], { stdio: ['pipe', 'inherit', 'inherit'] })
-    let response = ''
     for await (const completion of chatResponse) {
         const chunk = completion.choices[0]?.delta?.content
         if (!chunk) continue
         response += chunk
-        child.stdin.write(chunk)
+        message.content = response
     }
-    child.stdin.end()
-    await new Promise(d => child.on('exit', d))
-    stdout.write('\n')
     messages.push({ role: 'assistant', content: response })
 }
 
@@ -52,72 +49,42 @@ const client = new OpenAI({
     baseURL: 'https://ollama.com/v1',
     apiKey: (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/ollama`)).toString().trim()
 })
-// const model = 'qwen/qwen3.8-27b'
-// const client = new OpenAI({
-//     baseURL: 'https://api.groq.com/openai/v1',
-//     apiKey: (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/groq`)).toString().trim()
-// })
 
-stdout.write(`\
-${model} \
-${color.cyan}^D${color.reset} quit \
-${color.cyan}^Q${color.reset} !reset \
-${color.cyan}^A${color.reset} !again \
-${color.cyan}^N${color.reset} !next
-`)
+const renderer = await createCliRenderer({})
+const root = renderer.root
 
-let chunk: Buffer
-let prompt = ''
-
-if (stdin.isTTY) stdin.setRawMode(true)
-stdin.on('data', async c => {
-    chunk = c as Buffer
-    switch (chunk.length === 1 && chunk[0]) {
-        case 0x11: {
-            // ^Q
-            messages.splice(1)
-            stdout.write(`${color.red}!reset${color.reset}\n`)
-            prompt = ''
-            rl.prompt()
-            break
-        }
-        case 0x01: {
-            // ^A
-            messages.push({ role: 'user', content: 'give me alternative answer' })
-            stdout.write(`${color.red}!again${color.reset}\n`)
-            prompt = ''
-            rl.prompt()
-            break
-        }
-        case 0x0e: {
-            // ^N
-            stdout.write(`${color.red}!next${color.reset}\n`)
-            prompt = ''
-            messages.push({ role: 'user', content: 'continue' })
-            await sendPrompt()
-            rl.prompt()
-            break
-        }
+const contentBox = new ScrollBoxRenderable(renderer, {
+    flexGrow: 1,
+    stickyScroll: true,
+    stickyStart: 'bottom',
+    contentOptions: {
+        flexDirection: 'column',
+        justifyContent: 'flex-end'
     }
 })
+root.add(contentBox)
 
-const rl = createInterface({
-    input: stdin,
-    output: stdout,
-    prompt: `${color.cyan}> `
+const inputBox = new BoxRenderable(renderer, {
+    flexDirection: 'row'
 })
-rl.on('line', line => {
-    setTimeout(async () => {
-        prompt += line + '\n'
-        if (chunk.length === 1 && chunk[0] === 0x0d) {
-            messages.push({ role: 'user', content: prompt })
-            await sendPrompt()
-            prompt = ''
-            rl.prompt()
-        }
-    })
+root.add(inputBox)
+inputBox.add(new TextRenderable(renderer, { content: '> ' }))
+
+const textarea = new TextareaRenderable(renderer, {
+    flexGrow: 1,
+    keyBindings: [
+        { name: 'return', action: 'submit' },
+        { ctrl: true, name: 'j', action: 'newline' }
+    ],
+    tabIndicator: '>'
 })
-rl.on('close', () => {
-    exit(0)
-})
-rl.prompt()
+textarea.onSubmit = async () => {
+    const text = textarea.plainText
+    if (text.length === 0) return
+    messages.push({ role: 'user', content: text })
+    contentBox.add(new TextRenderable(renderer, { content: text, paddingBottom: 1 }))
+    textarea.clear()
+    await sendPrompt()
+}
+textarea.focus()
+inputBox.add(textarea)
