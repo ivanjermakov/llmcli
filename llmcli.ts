@@ -63,6 +63,12 @@ const contentBox = new ScrollBoxRenderable(renderer, {
     }
 })
 root.add(contentBox)
+renderer.keyInput.on('keypress', key => {
+    if (['h', 'j', 'k', 'l'].includes(key.name)) return
+    if (contentBox.handleKeyPress(key)) {
+        key.preventDefault()
+    }
+})
 
 const inputBox = new BoxRenderable(renderer, {
     flexDirection: 'row'
