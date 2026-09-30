@@ -76,11 +76,12 @@ renderer.keyInput.on('keypress', key => {
     }
 })
 
+const colorUser = RGBA.fromIndex(3)
 const inputBox = new BoxRenderable(renderer, {
     flexDirection: 'row'
 })
 root.add(inputBox)
-inputBox.add(new TextRenderable(renderer, { content: '> ' }))
+inputBox.add(new TextRenderable(renderer, { content: '> ', fg: colorUser }))
 
 const textarea = new TextareaRenderable(renderer, {
     flexGrow: 1,
@@ -88,13 +89,13 @@ const textarea = new TextareaRenderable(renderer, {
         { name: 'return', action: 'submit' },
         { ctrl: true, name: 'j', action: 'newline' }
     ],
-    tabIndicator: '>'
+    textColor: colorUser
 })
 textarea.onSubmit = async () => {
     const text = textarea.plainText
     if (text.length === 0) return
     messages.push({ role: 'user', content: text })
-    contentBox.add(new TextRenderable(renderer, { content: text, paddingBottom: 1 }))
+    contentBox.add(new TextRenderable(renderer, { content: text, paddingBottom: 1, fg: colorUser }))
     textarea.clear()
     await sendPrompt()
 }
