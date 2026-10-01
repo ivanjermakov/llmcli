@@ -33,7 +33,7 @@ const skill = {
         console.debug('reason prompt', prompt)
         const system = `\
 You are a subagent providing critical thinking and reasoning capability.
-Output in plain text without newlines.
+Output in plain text, omit newlines.
 Decompose the problem into chunks that need concrete answers.
 Suggest ways to gather more information about the problem using terminal commands.
 Question every statement beyond common sense, especially those that lose accuracy with time.
@@ -61,7 +61,7 @@ Responses over ${maxReasonSize} bytes will be truncated.
             if (!delta) continue
             if (delta.content) {
                 out += delta.content
-                r.content = out
+                r.content = [prompt, out].join('\n')
             }
         }
 
@@ -120,8 +120,10 @@ Must be used until clear and complete answer to the problem of USER is present i
                         properties: {
                             prompt: {
                                 type: 'string',
-                                description:
-                                    'Descriptive problem statement that needs clarification, decomposition, critical view'
+                                description: `\
+Descriptive problem statement that needs clarification, decomposition, critical view.
+Plain text, omit newlines.
+`
                             }
                         },
                         required: ['prompt'],
@@ -276,7 +278,7 @@ const contentBox = new ScrollBoxRenderable(renderer, {
 root.add(contentBox)
 
 const color = {
-    status: RGBA.fromIndex(0),
+    status: RGBA.fromIndex(7),
     user: RGBA.fromIndex(3)
 }
 const inputBox = new BoxRenderable(renderer, {
