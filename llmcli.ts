@@ -109,6 +109,8 @@ AGENT must extensively use it for:
                     description: `\
 Provides reasoning capabilities.
 Must be used until clear and complete answer to the problem of USER is present in context.
+Respond in plain text.
+Respond as what AGENT should do to get closer to solving the problem.
 `,
                     parameters: {
                         type: 'object',
@@ -122,16 +124,7 @@ Must be used until clear and complete answer to the problem of USER is present i
         ]
     })
 
-    const markdown = new MarkdownRenderable(renderer, {
-        syntaxStyle: SyntaxStyle.fromStyles({
-            keyword: { fg: RGBA.fromIndex(5) },
-            string: { fg: RGBA.fromIndex(2) },
-            comment: { fg: RGBA.fromIndex(8) },
-            number: { fg: RGBA.fromIndex(3) }
-        }),
-        streaming: true
-    })
-    contentBox.add(markdown)
+    let markdown: MarkdownRenderable | undefined
     let response = ''
     const chunks: ChatCompletionChunk[] = []
 
@@ -141,6 +134,18 @@ Must be used until clear and complete answer to the problem of USER is present i
         const delta = event.choices[0].delta
         if (!delta) continue
         if (delta.content) {
+            if (!markdown) {
+                markdown = new MarkdownRenderable(renderer, {
+                    syntaxStyle: SyntaxStyle.fromStyles({
+                        keyword: { fg: RGBA.fromIndex(5) },
+                        string: { fg: RGBA.fromIndex(2) },
+                        comment: { fg: RGBA.fromIndex(8) },
+                        number: { fg: RGBA.fromIndex(3) }
+                    }),
+                    streaming: true
+                })
+                contentBox.add(markdown)
+            }
             response += delta.content
             markdown.content += delta.content
         }
@@ -202,6 +207,7 @@ const maxReasonSize = 1000
 const agentInstructions = `\
 You are the autonomous AGENT.
 AGENT is not allowed to write final answer without having factual proof for every statement.
+AGENT must thoroughly search the web at all times.
 AGENT must always use "reason" skill immediately after USER message.
 AGENT must always use "reason" skill right before giving answer to USER.
 AGENT must use "reason" skill until full clear answer to the problem is obvious.
