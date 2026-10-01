@@ -1,0 +1,5 @@
+services:
+  llmcli:
+    build: .
+    container_name: llmcli-sandbox
+    command: tail -f /dev/null

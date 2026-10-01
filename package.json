@@ -4,11 +4,9 @@
     "description": "REPL for interacting with LLMs from the terminal based on Groq SDK",
     "main": "llmcli",
     "type": "module",
-    "scripts": {
-        "start": "node llmcli.ts"
-    },
     "dependencies": {
         "@opentui/core": "0.5.12",
+        "date-fns": "4.4.0",
         "openai": "7.23.0"
     },
     "devDependencies": {
