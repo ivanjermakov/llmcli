@@ -18,15 +18,24 @@ const skill = {
     exec: async (cmd: string) => {
         contentBox.add(new TextRenderable(renderer, { content: `$ ${cmd}`, fg: color.status }))
         console.debug('cmd', cmd)
+        const timeout = new Promise<string>(done => setTimeout(() => done('timeout'), spawnTimeoutMs))
         const child = spawn('docker', ['exec', 'llmcli-sandbox', '/bin/sh', '-c', cmd], {
             stdio: ['ignore', 'pipe', 'pipe']
         })
         let out = ''
         child.stdout.addListener('data', d => (out = out + d))
         child.stderr.addListener('data', d => (out = out + d))
-        await new Promise(d => child.on('exit', d))
-        console.debug('cmd output', out)
-        contentBox.add(new TextRenderable(renderer, { content: `${out.length}B command output`, fg: color.status }))
+        const exited = new Promise(d => child.on('exit', d))
+        const res = await Promise.race([timeout, exited])
+        if (res === 'timeout') {
+            console.warn('cmd timed out')
+            child.kill(9)
+            await exited
+            contentBox.add(new TextRenderable(renderer, { content: `killed`, fg: color.status }))
+        } else {
+            console.debug('cmd output', out)
+            contentBox.add(new TextRenderable(renderer, { content: `${out.length}B command output`, fg: color.status }))
+        }
         return out
     },
     reason: async (prompt: string) => {
@@ -86,6 +95,7 @@ Command output (stdout+stderr) will be piped back to AGENT.
 Output might be 0 bytes, in which case AGENT will receive \`EMPTY\`.
 Command output back to AGENT will be truncated to ${maxStdoutSize} bytes
 Redirect output to null if output is not needed
+Command executing over ${spawnTimeoutMs}ms will be terminated, AGENT will receive \`TIMEOUT\`.
 AGENT must extensively use it for:
   - reading offline info: cat, ls, etc.
   - reading online info: curl, google-chrome, playwright, etc.
@@ -215,6 +225,7 @@ Plain text, omit newlines.
 
 const maxStdoutSize = 10000
 const maxReasonSize = 10000
+const spawnTimeoutMs = 10000
 const agentInstructions = `\
 You are an autonomous AGENT.
 Today is ${new Date()}.
