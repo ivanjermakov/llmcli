@@ -86,8 +86,10 @@ AGENT must extensively use it for:
     messages.push({ role: 'assistant', content: response })
     console.debug('response', response)
 
+    let halt = true
     for (const call of toolCalls) {
         if (call.type === 'function' && call.function?.name === 'exec' && call.function.arguments) {
+            halt = false
             const cmd = JSON.parse(call.function.arguments).expression
             contentBox.add(new TextRenderable(renderer, { content: `$ ${cmd}`, fg: color.status }))
             console.debug('cmd', cmd)
@@ -101,7 +103,7 @@ AGENT must extensively use it for:
             console.debug('cmd output', out)
             contentBox.add(new TextRenderable(renderer, { content: `${out.length}B command output`, fg: color.status }))
             messages.push({
-                role: 'system',
+                role: 'user',
                 content:
                     out.length === 0
                         ? 'EMPTY'
@@ -111,7 +113,7 @@ AGENT must extensively use it for:
             })
         }
     }
-    if (messages.at(-1)?.role === 'system') {
+    if (!halt) {
         await sendPrompt()
     }
 }
