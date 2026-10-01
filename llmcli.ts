@@ -1,18 +1,18 @@
 import {
     BoxRenderable,
+    CliRenderer,
     MarkdownRenderable,
     RGBA,
     ScrollBoxRenderable,
     SyntaxStyle,
     TextRenderable,
-    TextareaRenderable,
-    createCliRenderer
+    TextareaRenderable
 } from '@opentui/core'
 import { spawn } from 'child_process'
 import { readFile } from 'fs/promises'
 import { OpenAI } from 'openai'
 import type { ChatCompletionChunk, ChatCompletionMessageParam } from 'openai/resources'
-import { env } from 'process'
+import { env, stdin, stdout } from 'process'
 
 const skill = {
     exec: async (cmd: string) => {
@@ -178,7 +178,7 @@ Plain text, omit newlines.
     messages.push({ role: 'assistant', content: response })
     console.debug('response', response)
 
-    let halt = true
+    let halt = response.length > 0
     for (const call of toolCalls) {
         if (call.type === 'function' && call.function && call.function.arguments) {
             halt = false
@@ -251,12 +251,19 @@ const client = new OpenAI({
     apiKey: (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/ollama`)).toString().trim()
 })
 
-const renderer = await createCliRenderer({
+const color = {
+    status: RGBA.fromIndex(7),
+    user: RGBA.fromIndex(3)
+}
+
+const renderer = new CliRenderer(stdin, stdout, stdout.columns, stdout.rows, {
     consoleOptions: {
         sizePercent: 100,
         backgroundColor: RGBA.fromValues(0.1, 0.1, 0.1, 1)
     }
 })
+await renderer.setupTerminal()
+renderer.on('resize', console.log)
 renderer.keyInput.on('keypress', key => {
     if (['pageup', 'pagedown'].includes(key.name)) {
         contentBox.handleKeyPress(key)
@@ -266,6 +273,7 @@ renderer.keyInput.on('keypress', key => {
         renderer.console.toggle()
     }
 })
+
 const root = new BoxRenderable(renderer, {
     flexDirection: 'column',
     width: '100%',
@@ -288,10 +296,6 @@ const contentBox = new ScrollBoxRenderable(renderer, {
 })
 root.add(contentBox)
 
-const color = {
-    status: RGBA.fromIndex(7),
-    user: RGBA.fromIndex(3)
-}
 const inputBox = new BoxRenderable(renderer, {
     width: '100%',
     flexDirection: 'row'
@@ -317,3 +321,4 @@ const textarea = new TextareaRenderable(renderer, {
 })
 textarea.focus()
 inputBox.add(textarea)
+renderer.intermediateRender()
