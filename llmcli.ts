@@ -11,7 +11,7 @@ import {
 import { spawn } from 'child_process'
 import { readFile } from 'fs/promises'
 import { OpenAI } from 'openai'
-import type { ChatCompletionMessageParam } from 'openai/resources'
+import type { ChatCompletionChunk, ChatCompletionMessageParam } from 'openai/resources'
 import { env } from 'process'
 
 type Message = {
@@ -20,44 +20,81 @@ type Message = {
 }
 
 const sendPrompt = async () => {
-    const chatResponse = await client.chat.completions.create({
+    const stream = await client.chat.completions.create({
         model,
         messages: messages as ChatCompletionMessageParam[],
-        stream: true
+        stream: true,
+        tools: [
+            {
+                type: 'function',
+                function: {
+                    name: 'exec',
+                    description: `\
+Execute a bash command and read output
+All commands are executed in a persistent sandbox Alpine Linux docker environment with internet access.
+Command output (stdout+stderr) will be piped back to AGENT.
+Output might be 0 bytes, in which case AGENT will receive \`EMPTY\`.
+Sending full command output back to AGENT is very expensive:
+  * it will be truncated to ${maxStdoutSize} bytes
+  * redirect output to null if output is not needed
+AGENT must extensively use it for:
+  - reading offline info: cat, ls, etc.
+  - reading online info: curl, google-chrome, playwright, etc.
+  - reading current date and time
+  - finding location
+  - writing programming scripts
+`,
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            expression: {
+                                type: 'string',
+                                description: 'Must be a valid bash expression that will be executed using `bash -c cmd'
+                            }
+                        },
+                        required: ['expression'],
+                        additionalProperties: false
+                    },
+                    strict: true
+                }
+            }
+        ]
     })
 
-    let r: MarkdownRenderable | undefined
+    const markdown = new MarkdownRenderable(renderer, {
+        syntaxStyle: SyntaxStyle.fromStyles({
+            keyword: { fg: RGBA.fromIndex(5) },
+            string: { fg: RGBA.fromIndex(2) },
+            comment: { fg: RGBA.fromIndex(8) },
+            number: { fg: RGBA.fromIndex(3) }
+        }),
+        streaming: true
+    })
+    contentBox.add(markdown)
     let response = ''
-    let isTool = false
+    const chunks: ChatCompletionChunk[] = []
 
-    for await (const completion of chatResponse) {
-        const chunk = completion.choices[0]?.delta?.content
-        if (!chunk) continue
-        if (response === '') {
-            isTool = chunk.startsWith('[')
-            if (!isTool) {
-                r = new MarkdownRenderable(renderer, {
-                    syntaxStyle: SyntaxStyle.fromStyles({
-                        keyword: { fg: RGBA.fromIndex(5) },
-                        string: { fg: RGBA.fromIndex(2) },
-                        comment: { fg: RGBA.fromIndex(8) },
-                        number: { fg: RGBA.fromIndex(3) }
-                    }),
-                    streaming: true
-                })
-                contentBox.add(r)
-            }
+    const toolCalls: ChatCompletionChunk.Choice.Delta.ToolCall[] = []
+    for await (const event of stream) {
+        chunks.push(event)
+        const delta = event.choices[0].delta
+        if (!delta) continue
+        if (delta.content) {
+            response += delta.content
+            markdown.content += delta.content
         }
-        response += chunk
-        if (r) r.content = response
+        if (delta.tool_calls) {
+            toolCalls.push(...delta.tool_calls)
+        }
     }
+
     messages.push({ role: 'assistant', content: response })
     console.debug('response', response)
 
-    if (isTool) {
-        if (response.startsWith('[exec]')) {
-            const cmd: string = response.replaceAll(/\[exec\]/g, '')
-            contentBox.add(new TextRenderable(renderer, { content: `$ ${cmd}`, fg: color.cmd }))
+    for (const call of toolCalls) {
+        if (call.type === 'function' && call.function?.name === 'exec' && call.function.arguments) {
+            const cmd = JSON.parse(call.function.arguments).expression
+            contentBox.add(new TextRenderable(renderer, { content: `$ ${cmd}`, fg: color.status }))
             console.debug('cmd', cmd)
             const child = spawn('docker', ['exec', 'llmcli-sandbox', '/bin/sh', '-c', cmd], {
                 stdio: ['ignore', 'pipe', 'pipe']
@@ -67,7 +104,7 @@ const sendPrompt = async () => {
             child.stderr.addListener('data', d => (out = out + d))
             await new Promise(d => child.on('exit', d))
             messages.push({
-                role: 'user',
+                role: 'system',
                 content:
                     out.length === 0
                         ? 'EMPTY'
@@ -76,48 +113,24 @@ const sendPrompt = async () => {
                             : out
             })
             console.debug('cmd output', out)
-            contentBox.add(new TextRenderable(renderer, { content: `${out.length}B command output`, fg: color.cmd }))
-            await sendPrompt()
-        } else {
-            throw Error(`unknown command response ${response}`)
+            contentBox.add(new TextRenderable(renderer, { content: `${out.length}B command output`, fg: color.status }))
         }
+    }
+    if (messages.at(-1)?.role === 'system') {
+        await sendPrompt()
     }
 }
 
 const maxStdoutSize = 1000
 const agentInstructions = `\
-You work as an agent.
-
-You have two respond types:
-  - user - answer in markdown as usual, without any indication of the response type
-    Make sure to not start response with '['
-  - tool - your response should strictly conform to \`[tool_name]tool_body\`.
-    Multiple tool responds can be issued in sequence, forming the loop until the first user response.
-
-Available tools:
-  - \`[exec]cmd\` - execute a bash command and read output
-    \`cmd\` must be a valid bash expression that will be executed using \`bash -c cmd\`
-    Example valid response: \`[exec]ls -la | wc -l > foo.txt\`
-    All commands are executed in a persistent sandbox Alpine Linux docker environment with internet access.
-    Command output (stdout+stderr) will be piped back to you as a first user message after the response.
-    Output might be 0 bytes, in which case you'll receive \`EMPTY\`.
-    Sending full command output back to you is very expensive:
-      * it will be truncated to ${maxStdoutSize} bytes
-      * redirect output to null if you don't care about it
-      * grep output as a part of a command, run command multiple times with different grep if needed
-
-Extensively use commands for:
-  - web scraping: curl, Chrome, Playwright, etc.
-  - reading current date and time
-  - finding location
-  - writing programming scripts
-
-Do not respond to the user until you're absolutely certain in the accuracy of your response and have proofs, use commands.
-Do not suggest to look up a website for more info, look it up yourself.
-Install any software you need to give definitive answer.
+You are the AGENT.
+The USER tasks AGENT with solving problems and answering questions.
 `
 const systemInstructions = (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/instructions.md`)).toString().trim()
-const messages: Message[] = [{ role: 'system', content: [agentInstructions, systemInstructions].join('\n\n') }]
+const messages: Message[] = [
+    { role: 'system', content: agentInstructions },
+    { role: 'system', content: systemInstructions }
+]
 
 const model = 'gemma4:31b'
 const client = new OpenAI({
@@ -127,6 +140,7 @@ const client = new OpenAI({
 
 const renderer = await createCliRenderer({
     consoleOptions: {
+        sizePercent: 100,
         backgroundColor: RGBA.fromValues(0.1, 0.1, 0.1, 1)
     }
 })
@@ -162,7 +176,7 @@ const contentBox = new ScrollBoxRenderable(renderer, {
 root.add(contentBox)
 
 const color = {
-    cmd: RGBA.fromIndex(0),
+    status: RGBA.fromIndex(0),
     user: RGBA.fromIndex(3)
 }
 const inputBox = new BoxRenderable(renderer, {
