@@ -32,8 +32,14 @@ const skill = {
     reason: async (prompt: string) => {
         console.debug('reason prompt', prompt)
         const system = `\
-You are a subagent providing reasoning capability.
+You are a subagent providing critical thinking and reasoning capability.
 Output in plain text without newlines.
+Decompose the problem into chunks that need concrete answers.
+Suggest ways to gather more information about the problem using terminal commands.
+Question every statement beyond common sense, especially those that lose accuracy with time.
+Respond in plain text.
+Respond as what AGENT should do to get closer to solving the problem.
+Responses over ${maxReasonSize} bytes will be truncated.
 `
         const stream = await client.chat.completions.create({
             model,
@@ -45,7 +51,7 @@ Output in plain text without newlines.
         })
         const r = new TextRenderable(renderer, {
             fg: color.status,
-            content: ''
+            content: prompt
         })
         contentBox.add(r)
 
@@ -78,9 +84,8 @@ Execute a bash command and read output
 All commands are executed in a persistent sandbox Alpine Linux docker environment with internet access.
 Command output (stdout+stderr) will be piped back to AGENT.
 Output might be 0 bytes, in which case AGENT will receive \`EMPTY\`.
-Sending full command output back to AGENT is very expensive:
-  * it will be truncated to ${maxStdoutSize} bytes
-  * redirect output to null if output is not needed
+Command output back to AGENT will be truncated to ${maxStdoutSize} bytes
+Redirect output to null if output is not needed
 AGENT must extensively use it for:
   - reading offline info: cat, ls, etc.
   - reading online info: curl, google-chrome, playwright, etc.
@@ -109,12 +114,16 @@ AGENT must extensively use it for:
                     description: `\
 Provides reasoning capabilities.
 Must be used until clear and complete answer to the problem of USER is present in context.
-Respond in plain text.
-Respond as what AGENT should do to get closer to solving the problem.
 `,
                     parameters: {
                         type: 'object',
-                        properties: { prompt: { type: 'string' } },
+                        properties: {
+                            prompt: {
+                                type: 'string',
+                                description:
+                                    'Descriptive problem statement that needs clarification, decomposition, critical view'
+                            }
+                        },
                         required: ['prompt'],
                         additionalProperties: false
                     },
@@ -202,17 +211,20 @@ Respond as what AGENT should do to get closer to solving the problem.
     }
 }
 
-const maxStdoutSize = 1000
-const maxReasonSize = 1000
+const maxStdoutSize = 10000
+const maxReasonSize = 10000
 const agentInstructions = `\
-You are the autonomous AGENT.
-AGENT is not allowed to write final answer without having factual proof for every statement.
-AGENT must thoroughly search the web at all times.
-AGENT must always use "reason" skill immediately after USER message.
-AGENT must always use "reason" skill right before giving answer to USER.
-AGENT must use "reason" skill until full clear answer to the problem is obvious.
-AGENT must use "exec" skill to utilize full advantage from having internet and unbounded terminal access.
-AGENT must not give up on failures to get to answers quickly, must iterate using tools.
+You are an autonomous AGENT.
+Today is ${new Date()}.
+AGENT must:
+  - not write final answer without having factual proof for every statement.
+  - thoroughly search the web at all times.
+  - not rely on training knowledge without verifying it externally.
+  - always use "reason" skill immediately after USER message.
+  - always use "reason" skill right before giving answer to USER.
+  - use "reason" skill until full clear answer to the problem is obvious.
+  - use "exec" skill to utilize full advantage from having internet and unbounded terminal access.
+  - not give up on failures to get to answers quickly, must iterate using tools.
 `
 const systemInstructions = (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/instructions.md`)).toString().trim()
 const messages: ChatCompletionMessageParam[] = [
