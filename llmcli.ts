@@ -52,11 +52,11 @@ const sendPrompt = async () => {
         if (r) r.content = response
     }
     messages.push({ role: 'assistant', content: response })
-    if (r) console.debug('response', r.content)
+    console.debug('response', response)
 
     if (isCommand) {
         if (response.startsWith('[exec]')) {
-            const cmd: string = JSON.parse(response.replaceAll(/\[exec\]/g, ''))
+            const cmd: string = response.replaceAll(/\[exec\]/g, '')
             contentBox.add(new TextRenderable(renderer, { content: `sh ${cmd}` }))
             console.debug('cmd', cmd)
             const child = spawn('docker', ['exec', 'llmcli-sandbox', '/bin/sh', '-c', cmd], {
@@ -66,35 +66,58 @@ const sendPrompt = async () => {
             child.stdout.addListener('data', d => (out = out + d))
             child.stderr.addListener('data', d => (out = out + d))
             await new Promise(d => child.on('exit', d))
-            messages.push({ role: 'user', content: out })
+            messages.push({
+                role: 'user',
+                content:
+                    out.length === 0
+                        ? 'EMPTY'
+                        : out.length > maxStdoutSize
+                            ? `TRUNCATED (${maxStdoutSize}/${out.length})B ${out.slice(0, maxStdoutSize)}`
+                            : out
+            })
             console.debug('cmd output', out)
-            contentBox.add(new TextRenderable(renderer, { content: out }))
-            sendPrompt()
+            contentBox.add(new TextRenderable(renderer, { content: `${out.length}B command output`, fg: color.cmd }))
+            await sendPrompt()
         } else {
             throw Error(`unknown command response ${response}`)
         }
     }
 }
 
+const maxStdoutSize = 1000
 const agentInstructions = `\
 You work as an agent.
-You have to respond types:
-  - user - answer in markdown as usual, just don't start response that can be confused as command
-  - command - your response should conform to \`[cmd_name]json\`.
-Feel free to use commands to improve response quality, especialy when not certain or need newer info.
-Multiple commands can be issued in sequence, forming the loop until the first user response.
-Command will only be processed if it is at the very start of your response.
-One command per your response.
+
+You have two respond types:
+  - user - answer in markdown as usual, without any indication of the response type
+    Make sure to not start response with '['
+  - command - your response should conform to \`[cmd_name]cmd_body\`.
+    Multiple commands can be issued in sequence, forming the loop until the first user response.
+    Command will only be processed if it is at the very start of your response.
+    One command per your response.
+
 Available commands:
-  - exec, with cmd that will be passed to \`sh -c cmd\`, e.g. \`[exec]"ls -la | wc -l > foo.txt"\`
+  - exec, cmd_body is a valid bash expression that will be passed as \`bash -c cmd\`
+    Example response: \`[exec]ls -la | wc -l > foo.txt\`
     All cmds are executed in a sandbox Alpine Linux docker environment with internet, persistent across commands.
     Cmd output (stdout+stderr) will be piped back to you as a first user message after the response.
+    Output might be 0 bytes, in which case you'll receive \`EMPTY\`.
+    Sending full cmd output back to you is very expensive:
+      * it will be truncated to ${maxStdoutSize} bytes
+      * redirect output to null if you don't care about it
+      * grepping output as a part of cmd, run cmd multiple times with different grep if needed.
+
+Extensively use commands to:
+  - web scrape: curl, Chrome, Playwright, etc.
+  - date and time
+  - location
+
+Do not respond to the user until you're absolutely certain in the accuracy of your response and have proofs, use commands.
+Do not suggest to look up a website for more info, look it up yourself.
+Install any software you need to give definitive answer.
 `
 const systemInstructions = (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/instructions.md`)).toString().trim()
-const messages: Message[] = [
-    { role: 'system', content: agentInstructions },
-    { role: 'system', content: systemInstructions }
-]
+const messages: Message[] = [{ role: 'system', content: [agentInstructions, systemInstructions].join('\n\n') }]
 
 const model = 'gemma4:31b'
 const client = new OpenAI({
@@ -138,13 +161,16 @@ const contentBox = new ScrollBoxRenderable(renderer, {
 })
 root.add(contentBox)
 
-const colorUser = RGBA.fromIndex(3)
+const color = {
+    cmd: RGBA.fromIndex(0),
+    user: RGBA.fromIndex(3)
+}
 const inputBox = new BoxRenderable(renderer, {
     width: '100%',
     flexDirection: 'row'
 })
 root.add(inputBox)
-inputBox.add(new TextRenderable(renderer, { content: '> ', fg: colorUser }))
+inputBox.add(new TextRenderable(renderer, { content: '> ', fg: color.user }))
 
 const textarea = new TextareaRenderable(renderer, {
     flexGrow: 1,
@@ -152,12 +178,12 @@ const textarea = new TextareaRenderable(renderer, {
         { name: 'return', action: 'submit' },
         { ctrl: true, name: 'j', action: 'newline' }
     ],
-    textColor: colorUser,
+    textColor: color.user,
     onSubmit: async () => {
         const text = textarea.plainText
         if (text.length === 0) return
         messages.push({ role: 'user', content: text })
-        contentBox.add(new TextRenderable(renderer, { content: text, fg: colorUser }))
+        contentBox.add(new TextRenderable(renderer, { content: text, fg: color.user }))
         textarea.clear()
         await sendPrompt()
     }
