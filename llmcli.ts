@@ -26,7 +26,7 @@ const sendPrompt = async () => {
         stream: true
     })
 
-    let r!: MarkdownRenderable
+    let r: MarkdownRenderable | undefined
     let response = ''
     let isCommand = false
 
@@ -43,17 +43,16 @@ const sendPrompt = async () => {
                         comment: { fg: RGBA.fromIndex(8) },
                         number: { fg: RGBA.fromIndex(3) }
                     }),
-                    streaming: true,
-                    paddingBottom: 1
+                    streaming: true
                 })
                 contentBox.add(r)
             }
         }
         response += chunk
-        if (!isCommand) r.content = response
+        if (r) r.content = response
     }
     messages.push({ role: 'assistant', content: response })
-    if (!isCommand) console.debug('response', r.content)
+    if (r) console.debug('response', r.content)
 
     if (isCommand) {
         if (response.startsWith('[exec]')) {
@@ -82,12 +81,14 @@ You work as an agent.
 You have to respond types:
   - user - answer in markdown as usual, just don't start response that can be confused as command
   - command - your response should conform to \`[cmd_name]json\`.
+Feel free to use commands to improve response quality, especialy when not certain or need newer info.
+Multiple commands can be issued in sequence, forming the loop until the first user response.
+Command will only be processed if it is at the very start of your response.
+One command per your response.
 Available commands:
   - exec, with cmd that will be passed to \`sh -c cmd\`, e.g. \`[exec]"ls -la | wc -l > foo.txt"\`
     All cmds are executed in a sandbox Alpine Linux docker environment with internet, persistent across commands.
     Cmd output (stdout+stderr) will be piped back to you as a first user message after the response.
-Feel free to use commands to improve the final response to the user.
-Multiple commands can be issued in sequence, forming the loop until the first user response
 `
 const systemInstructions = (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/instructions.md`)).toString().trim()
 const messages: Message[] = [
@@ -101,9 +102,13 @@ const client = new OpenAI({
     apiKey: (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/ollama`)).toString().trim()
 })
 
-const renderer = await createCliRenderer({})
+const renderer = await createCliRenderer({
+    consoleOptions: {
+        backgroundColor: RGBA.fromValues(0.1, 0.1, 0.1, 1)
+    }
+})
 renderer.keyInput.on('keypress', key => {
-    if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(key.name)) {
+    if (['pageup', 'pagedown'].includes(key.name)) {
         contentBox.handleKeyPress(key)
         key.preventDefault()
     }
@@ -111,21 +116,31 @@ renderer.keyInput.on('keypress', key => {
         renderer.console.toggle()
     }
 })
-const root = renderer.root
+const root = new BoxRenderable(renderer, {
+    flexDirection: 'column',
+    width: '100%',
+    height: '100%',
+    gap: 1
+})
+renderer.root.add(root)
 
 const contentBox = new ScrollBoxRenderable(renderer, {
     flexGrow: 1,
+    flexBasis: 0,
     stickyScroll: true,
     stickyStart: 'bottom',
+    viewportCulling: true,
     contentOptions: {
         flexDirection: 'column',
-        justifyContent: 'flex-end'
+        justifyContent: 'flex-end',
+        gap: 1
     }
 })
 root.add(contentBox)
 
 const colorUser = RGBA.fromIndex(3)
 const inputBox = new BoxRenderable(renderer, {
+    width: '100%',
     flexDirection: 'row'
 })
 root.add(inputBox)
@@ -137,15 +152,15 @@ const textarea = new TextareaRenderable(renderer, {
         { name: 'return', action: 'submit' },
         { ctrl: true, name: 'j', action: 'newline' }
     ],
-    textColor: colorUser
+    textColor: colorUser,
+    onSubmit: async () => {
+        const text = textarea.plainText
+        if (text.length === 0) return
+        messages.push({ role: 'user', content: text })
+        contentBox.add(new TextRenderable(renderer, { content: text, fg: colorUser }))
+        textarea.clear()
+        await sendPrompt()
+    }
 })
-textarea.onSubmit = async () => {
-    const text = textarea.plainText
-    if (text.length === 0) return
-    messages.push({ role: 'user', content: text })
-    contentBox.add(new TextRenderable(renderer, { content: text, paddingBottom: 1, fg: colorUser }))
-    textarea.clear()
-    await sendPrompt()
-}
 textarea.focus()
 inputBox.add(textarea)
