@@ -14,6 +14,55 @@ import { OpenAI } from 'openai'
 import type { ChatCompletionChunk, ChatCompletionMessageParam } from 'openai/resources'
 import { env } from 'process'
 
+const skill = {
+    exec: async (cmd: string) => {
+        contentBox.add(new TextRenderable(renderer, { content: `$ ${cmd}`, fg: color.status }))
+        console.debug('cmd', cmd)
+        const child = spawn('docker', ['exec', 'llmcli-sandbox', '/bin/sh', '-c', cmd], {
+            stdio: ['ignore', 'pipe', 'pipe']
+        })
+        let out = ''
+        child.stdout.addListener('data', d => (out = out + d))
+        child.stderr.addListener('data', d => (out = out + d))
+        await new Promise(d => child.on('exit', d))
+        console.debug('cmd output', out)
+        contentBox.add(new TextRenderable(renderer, { content: `${out.length}B command output`, fg: color.status }))
+        return out
+    },
+    reason: async (prompt: string) => {
+        console.debug('reason prompt', prompt)
+        const system = `\
+You are a subagent providing reasoning capability.
+Output in plain text without newlines.
+`
+        const stream = await client.chat.completions.create({
+            model,
+            messages: [
+                { role: 'system', content: system },
+                { role: 'user', content: prompt }
+            ],
+            stream: true
+        })
+        const r = new TextRenderable(renderer, {
+            fg: color.status,
+            content: ''
+        })
+        contentBox.add(r)
+
+        let out = ''
+        for await (const event of stream) {
+            const delta = event.choices[0].delta
+            if (!delta) continue
+            if (delta.content) {
+                out += delta.content
+                r.content = out
+            }
+        }
+
+        return out
+    }
+}
+
 const sendPrompt = async () => {
     const stream = await client.chat.completions.create({
         model,
@@ -48,6 +97,23 @@ AGENT must extensively use it for:
                             }
                         },
                         required: ['expression'],
+                        additionalProperties: false
+                    },
+                    strict: true
+                }
+            },
+            {
+                type: 'function',
+                function: {
+                    name: 'reason',
+                    description: `\
+Provides reasoning capabilities.
+Must be used until clear and complete answer to the problem of USER is present in context.
+`,
+                    parameters: {
+                        type: 'object',
+                        properties: { prompt: { type: 'string' } },
+                        required: ['prompt'],
                         additionalProperties: false
                     },
                     strict: true
@@ -88,29 +154,42 @@ AGENT must extensively use it for:
 
     let halt = true
     for (const call of toolCalls) {
-        if (call.type === 'function' && call.function?.name === 'exec' && call.function.arguments) {
+        if (call.type === 'function' && call.function && call.function.arguments) {
             halt = false
-            const cmd = JSON.parse(call.function.arguments).expression
-            contentBox.add(new TextRenderable(renderer, { content: `$ ${cmd}`, fg: color.status }))
-            console.debug('cmd', cmd)
-            const child = spawn('docker', ['exec', 'llmcli-sandbox', '/bin/sh', '-c', cmd], {
-                stdio: ['ignore', 'pipe', 'pipe']
-            })
-            let out = ''
-            child.stdout.addListener('data', d => (out = out + d))
-            child.stderr.addListener('data', d => (out = out + d))
-            await new Promise(d => child.on('exit', d))
-            console.debug('cmd output', out)
-            contentBox.add(new TextRenderable(renderer, { content: `${out.length}B command output`, fg: color.status }))
-            messages.push({
-                role: 'user',
-                content:
-                    out.length === 0
-                        ? 'EMPTY'
-                        : out.length > maxStdoutSize
-                            ? `TRUNCATED (${maxStdoutSize}/${out.length})B ${out.slice(0, maxStdoutSize)}`
-                            : out
-            })
+            switch (call.function.name) {
+                case 'exec': {
+                    const cmd = JSON.parse(call.function.arguments).expression
+                    const out = await skill.exec(cmd)
+                    messages.push({
+                        role: 'system',
+                        content:
+                            out.length === 0
+                                ? 'EMPTY'
+                                : out.length > maxStdoutSize
+                                    ? `TRUNCATED (${maxStdoutSize}/${out.length})B ${out.slice(0, maxStdoutSize)}`
+                                    : out
+                    })
+                    break
+                }
+                case 'reason': {
+                    const prompt = JSON.parse(call.function.arguments).prompt
+                    const out = await skill.reason(prompt)
+                    console.debug('reason', out)
+                    messages.push({
+                        role: 'system',
+                        content:
+                            out.length === 0
+                                ? 'EMPTY'
+                                : out.length > maxReasonSize
+                                    ? `TRUNCATED (${maxReasonSize}/${out.length})B ${out.slice(0, maxReasonSize)}`
+                                    : out
+                    })
+                    break
+                }
+                default: {
+                    console.warn('unknown skill', call.function.name)
+                }
+            }
         }
     }
     if (!halt) {
@@ -119,9 +198,15 @@ AGENT must extensively use it for:
 }
 
 const maxStdoutSize = 1000
+const maxReasonSize = 1000
 const agentInstructions = `\
-You are the AGENT.
-The USER tasks AGENT with solving problems and answering questions.
+You are the autonomous AGENT.
+AGENT is not allowed to write final answer without having factual proof for every statement.
+AGENT must always use "reason" skill immediately after USER message.
+AGENT must always use "reason" skill right before giving answer to USER.
+AGENT must use "reason" skill until full clear answer to the problem is obvious.
+AGENT must use "exec" skill to utilize full advantage from having internet and unbounded terminal access.
+AGENT must not give up on failures to get to answers quickly, must iterate using tools.
 `
 const systemInstructions = (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/instructions.md`)).toString().trim()
 const messages: ChatCompletionMessageParam[] = [
