@@ -14,15 +14,10 @@ import { OpenAI } from 'openai'
 import type { ChatCompletionChunk, ChatCompletionMessageParam } from 'openai/resources'
 import { env } from 'process'
 
-type Message = {
-    role: string
-    content: string
-}
-
 const sendPrompt = async () => {
     const stream = await client.chat.completions.create({
         model,
-        messages: messages as ChatCompletionMessageParam[],
+        messages,
         stream: true,
         tools: [
             {
@@ -103,6 +98,8 @@ AGENT must extensively use it for:
             child.stdout.addListener('data', d => (out = out + d))
             child.stderr.addListener('data', d => (out = out + d))
             await new Promise(d => child.on('exit', d))
+            console.debug('cmd output', out)
+            contentBox.add(new TextRenderable(renderer, { content: `${out.length}B command output`, fg: color.status }))
             messages.push({
                 role: 'system',
                 content:
@@ -112,8 +109,6 @@ AGENT must extensively use it for:
                             ? `TRUNCATED (${maxStdoutSize}/${out.length})B ${out.slice(0, maxStdoutSize)}`
                             : out
             })
-            console.debug('cmd output', out)
-            contentBox.add(new TextRenderable(renderer, { content: `${out.length}B command output`, fg: color.status }))
         }
     }
     if (messages.at(-1)?.role === 'system') {
@@ -127,7 +122,7 @@ You are the AGENT.
 The USER tasks AGENT with solving problems and answering questions.
 `
 const systemInstructions = (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/instructions.md`)).toString().trim()
-const messages: Message[] = [
+const messages: ChatCompletionMessageParam[] = [
     { role: 'system', content: agentInstructions },
     { role: 'system', content: systemInstructions }
 ]
