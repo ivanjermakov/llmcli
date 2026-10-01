@@ -28,14 +28,14 @@ const sendPrompt = async () => {
 
     let r: MarkdownRenderable | undefined
     let response = ''
-    let isCommand = false
+    let isTool = false
 
     for await (const completion of chatResponse) {
         const chunk = completion.choices[0]?.delta?.content
         if (!chunk) continue
         if (response === '') {
-            isCommand = chunk.startsWith('[')
-            if (!isCommand) {
+            isTool = chunk.startsWith('[')
+            if (!isTool) {
                 r = new MarkdownRenderable(renderer, {
                     syntaxStyle: SyntaxStyle.fromStyles({
                         keyword: { fg: RGBA.fromIndex(5) },
@@ -54,10 +54,10 @@ const sendPrompt = async () => {
     messages.push({ role: 'assistant', content: response })
     console.debug('response', response)
 
-    if (isCommand) {
+    if (isTool) {
         if (response.startsWith('[exec]')) {
             const cmd: string = response.replaceAll(/\[exec\]/g, '')
-            contentBox.add(new TextRenderable(renderer, { content: `sh ${cmd}` }))
+            contentBox.add(new TextRenderable(renderer, { content: `$ ${cmd}`, fg: color.cmd }))
             console.debug('cmd', cmd)
             const child = spawn('docker', ['exec', 'llmcli-sandbox', '/bin/sh', '-c', cmd], {
                 stdio: ['ignore', 'pipe', 'pipe']
@@ -91,26 +91,26 @@ You work as an agent.
 You have two respond types:
   - user - answer in markdown as usual, without any indication of the response type
     Make sure to not start response with '['
-  - command - your response should conform to \`[cmd_name]cmd_body\`.
-    Multiple commands can be issued in sequence, forming the loop until the first user response.
-    Command will only be processed if it is at the very start of your response.
-    One command per your response.
+  - tool - your response should strictly conform to \`[tool_name]tool_body\`.
+    Multiple tool responds can be issued in sequence, forming the loop until the first user response.
 
-Available commands:
-  - exec, cmd_body is a valid bash expression that will be passed as \`bash -c cmd\`
-    Example response: \`[exec]ls -la | wc -l > foo.txt\`
-    All cmds are executed in a sandbox Alpine Linux docker environment with internet, persistent across commands.
-    Cmd output (stdout+stderr) will be piped back to you as a first user message after the response.
+Available tools:
+  - \`[exec]cmd\` - execute a bash command and read output
+    \`cmd\` must be a valid bash expression that will be executed using \`bash -c cmd\`
+    Example valid response: \`[exec]ls -la | wc -l > foo.txt\`
+    All commands are executed in a persistent sandbox Alpine Linux docker environment with internet access.
+    Command output (stdout+stderr) will be piped back to you as a first user message after the response.
     Output might be 0 bytes, in which case you'll receive \`EMPTY\`.
-    Sending full cmd output back to you is very expensive:
+    Sending full command output back to you is very expensive:
       * it will be truncated to ${maxStdoutSize} bytes
       * redirect output to null if you don't care about it
-      * grepping output as a part of cmd, run cmd multiple times with different grep if needed.
+      * grep output as a part of a command, run command multiple times with different grep if needed
 
-Extensively use commands to:
-  - web scrape: curl, Chrome, Playwright, etc.
-  - date and time
-  - location
+Extensively use commands for:
+  - web scraping: curl, Chrome, Playwright, etc.
+  - reading current date and time
+  - finding location
+  - writing programming scripts
 
 Do not respond to the user until you're absolutely certain in the accuracy of your response and have proofs, use commands.
 Do not suggest to look up a website for more info, look it up yourself.
