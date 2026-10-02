@@ -11,39 +11,112 @@ import {
 import { spawn } from 'child_process'
 import { readFile } from 'fs/promises'
 import { OpenAI } from 'openai'
-import type { ChatCompletionChunk, ChatCompletionMessageParam } from 'openai/resources'
+import type { ChatCompletionChunk, ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources'
 import { env, stdin, stdout } from 'process'
 
-const tool = {
-    exec: async (cmd: string) => {
-        contentBox.add(new TextRenderable(renderer, { content: `$ ${cmd}`, fg: color.cmd }))
-        console.debug('cmd', cmd)
-        const timeout = new Promise<string>(done => setTimeout(() => done('timeout'), spawnTimeoutMs))
-        const child = spawn('docker', ['exec', 'llmcli-sandbox', '/bin/sh', '-c', cmd], {
-            stdio: ['ignore', 'pipe', 'pipe']
-        })
-        let out = ''
-        child.stdout.addListener('data', d => (out = out + d))
-        child.stderr.addListener('data', d => (out = out + d))
-        const exited = new Promise(d => child.on('exit', d))
-        const res = await Promise.race([timeout, exited])
-        if (res === 'timeout') {
-            console.warn('cmd timed out')
-            child.kill(9)
-            await exited
-            contentBox.add(new TextRenderable(renderer, { content: `killed`, fg: color.cmd }))
-            out = `${out}\nTIMEOUT`
-        } else {
-            console.debug('cmd output', out)
-            contentBox.add(
-                new TextRenderable(renderer, { content: `${formatBytes(out.length)} command output`, fg: color.cmd })
-            )
+const maxIterations = 20
+const maxStdoutSize = 10000
+const maxReasonSize = 10000
+const spawnTimeoutMs = 60000
+const answerThreshold = 0.8
+
+const tool: Record<'exec' | 'reason', { spec: ChatCompletionTool; run: any }> = {
+    exec: {
+        spec: {
+            type: 'function',
+            function: {
+                name: 'exec',
+                description: `\
+Execute a bash command and read output
+All commands are executed in a persistent sandbox Alpine Linux docker environment with internet access.
+Command output (stdout+stderr) will be piped back to AGENT.
+Command exiting without output -> will respond \`EMPTY\`.
+Command executing over ${spawnTimeoutMs}ms will be terminated -> will respond \`TIMEOUT\`.
+Must be extensively used for:
+  - reading offline info: cat, ls, etc.
+  - reading online info: curl, google-chrome, playwright, etc.
+  - reading current date and time
+  - finding location
+  - writing programming scripts
+  - installing software
+Any other use case is welcome.
+`,
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        expression: {
+                            type: 'string',
+                            description: 'Must be a valid bash expression that will be executed using `bash -c cmd'
+                        }
+                    },
+                    required: ['expression'],
+                    additionalProperties: false
+                },
+                strict: true
+            }
+        },
+        run: async (cmd: string) => {
+            contentBox.add(new TextRenderable(renderer, { content: `$ ${cmd}`, fg: color.cmd }))
+            console.debug('cmd', cmd)
+            const timeout = new Promise<string>(done => setTimeout(() => done('timeout'), spawnTimeoutMs))
+            const child = spawn('docker', ['exec', 'llmcli-sandbox', '/bin/sh', '-c', cmd], {
+                stdio: ['ignore', 'pipe', 'pipe']
+            })
+            let out = ''
+            child.stdout.addListener('data', d => (out = out + d))
+            child.stderr.addListener('data', d => (out = out + d))
+            const exited = new Promise(d => child.on('exit', d))
+            const res = await Promise.race([timeout, exited])
+            if (res === 'timeout') {
+                console.warn('cmd timed out')
+                child.kill(9)
+                await exited
+                contentBox.add(new TextRenderable(renderer, { content: `killed`, fg: color.cmd }))
+                out = `${out}\nTIMEOUT`
+            } else {
+                console.debug('cmd output', out)
+                contentBox.add(
+                    new TextRenderable(renderer, {
+                        content: `${formatBytes(out.length)} command output`,
+                        fg: color.cmd
+                    })
+                )
+            }
+            return out.length > 0 ? out : 'EMPTY'
         }
-        return out.length > 0 ? out : 'EMPTY'
     },
-    reason: async (prompt: string) => {
-        console.debug('reason prompt', prompt)
-        const system = `\
+    reason: {
+        spec: {
+            type: 'function',
+            function: {
+                name: 'reason',
+                description: `\
+Provides reasoning capabilities.
+Use for:
+  - problem decomposition into smaller tasks
+  - problem space exploration
+`,
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        prompt: {
+                            type: 'string',
+                            description: `\
+Small piece of context that needs clarification, decomposition, critical view.
+Format prompt as it is your own question.
+Plain text, omit newlines.
+`
+                        }
+                    },
+                    required: ['prompt'],
+                    additionalProperties: false
+                },
+                strict: true
+            }
+        },
+        run: async (prompt: string) => {
+            console.debug('reason prompt', prompt)
+            const system = `\
 You are a SUBAGENT providing critical thinking and reasoning, given PROMPT by USER.
 Output in plain text, omit newlines.
 Respond in plain text.
@@ -59,28 +132,29 @@ Do not copy information already present in PROMPT.
 Use concise language.
 Responses over ${maxReasonSize} bytes will be truncated.
 `
-        const stream = await client.chat.completions.create({
-            model,
-            messages: [
-                { role: 'system', content: system },
-                { role: 'user', content: prompt }
-            ],
-            stream: true
-        })
-        const r = new TextRenderable(renderer, { content: prompt, fg: color.reason })
-        contentBox.add(r)
+            const stream = await client.chat.completions.create({
+                model,
+                messages: [
+                    { role: 'system', content: system },
+                    { role: 'user', content: prompt }
+                ],
+                stream: true
+            })
+            const r = new TextRenderable(renderer, { content: prompt, fg: color.reason })
+            contentBox.add(r)
 
-        let out = ''
-        for await (const event of stream) {
-            const delta = event.choices[0].delta
-            if (!delta) continue
-            if (delta.content) {
-                out += delta.content
-                r.content = [prompt, out].join('\n')
+            let out = ''
+            for await (const event of stream) {
+                const delta = event.choices[0].delta
+                if (!delta) continue
+                if (delta.content) {
+                    out += delta.content
+                    r.content = [prompt, out].join('\n')
+                }
             }
-        }
 
-        return out
+            return out
+        }
     }
 }
 
@@ -151,71 +225,7 @@ const sendPrompt = async () => {
             model,
             messages,
             stream: true,
-            tools: [
-                {
-                    type: 'function',
-                    function: {
-                        name: 'exec',
-                        description: `\
-Execute a bash command and read output
-All commands are executed in a persistent sandbox Alpine Linux docker environment with internet access.
-Command output (stdout+stderr) will be piped back to AGENT.
-Command output back to AGENT will be truncated to ${maxStdoutSize} bytes
-Command exiting without output -> will respond \`EMPTY\`.
-Command executing over ${spawnTimeoutMs}ms will be terminated -> will respond \`TIMEOUT\`.
-Must be extensively used for:
-  - reading offline info: cat, ls, etc.
-  - reading online info: curl, google-chrome, playwright, etc.
-  - reading current date and time
-  - finding location
-  - writing programming scripts
-  - installing software
-Any other use case is welcome.
-`,
-                        parameters: {
-                            type: 'object',
-                            properties: {
-                                expression: {
-                                    type: 'string',
-                                    description:
-                                        'Must be a valid bash expression that will be executed using `bash -c cmd'
-                                }
-                            },
-                            required: ['expression'],
-                            additionalProperties: false
-                        },
-                        strict: true
-                    }
-                },
-                {
-                    type: 'function',
-                    function: {
-                        name: 'reason',
-                        description: `\
-Provides reasoning capabilities.
-Use for:
-  - problem decomposition into smaller tasks
-  - problem space exploration
-`,
-                        parameters: {
-                            type: 'object',
-                            properties: {
-                                prompt: {
-                                    type: 'string',
-                                    description: `\
-Small piece of context that needs clarification, decomposition, critical view.
-Format prompt as it is your own question.
-Plain text, omit newlines.
-`
-                                }
-                            },
-                            required: ['prompt'],
-                            additionalProperties: false
-                        },
-                        strict: true
-                    }
-                }
-            ]
+            tools: [tool.exec.spec, tool.reason.spec]
         })
         statusText.content = 'answering'
 
@@ -260,14 +270,14 @@ Plain text, omit newlines.
                     case 'exec': {
                         statusText.content = 'executing'
                         const cmd = JSON.parse(call.function.arguments).expression
-                        const out = await tool.exec(cmd)
-                        addToContext({ role: 'assistant', content: `$ ${cmd}\n${truncate(out, maxReasonSize)}` })
+                        const out = await tool.exec.run(cmd)
+                        addToContext({ role: 'assistant', content: `$ ${cmd}\n${truncate(out, maxStdoutSize)}` })
                         break
                     }
                     case 'reason': {
                         statusText.content = 'reasoning'
                         const prompt = JSON.parse(call.function.arguments).prompt
-                        const out = await tool.reason(prompt)
+                        const out = await tool.reason.run(prompt)
                         console.debug('reason', out)
                         addToContext({ role: 'assistant', content: truncate(out, maxReasonSize) })
                         break
@@ -293,11 +303,6 @@ Plain text, omit newlines.
     contentBox.add(new TextRenderable(renderer, { content: `agent exhausted`, fg: color.error }))
 }
 
-const maxIterations = 20
-const maxStdoutSize = 10000
-const maxReasonSize = 10000
-const spawnTimeoutMs = 60000
-const answerThreshold = 0.8
 const agentInstructions = `\
 You are an autonomous agent.
 Today is ${new Date()}.
