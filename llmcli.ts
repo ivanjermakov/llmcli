@@ -78,7 +78,24 @@ Responses over ${maxReasonSize} bytes will be truncated.
     }
 }
 
+const contextSize = () => {
+    return messages.map(m => (typeof m.content === 'string' ? m.content.length : 0)).reduce((a, b) => a + b, 0)
+}
+
+const formatBytes = (bytes: number) => {
+    if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)}GB`
+    if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)}MB`
+    if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(1)}KB`
+    return `${bytes}B`
+}
+
+const addToContext = (message: ChatCompletionMessageParam) => {
+    messages.push(message)
+    contextSizeText.content = formatBytes(contextSize())
+}
+
 const sendPrompt = async () => {
+    statusText.content = 'loading'
     const stream = await client.chat.completions.create({
         model,
         messages,
@@ -144,6 +161,7 @@ Plain text, omit newlines.
             }
         ]
     })
+    statusText.content = 'answering'
 
     let markdown: MarkdownRenderable | undefined
     let response = ''
@@ -175,7 +193,7 @@ Plain text, omit newlines.
         }
     }
 
-    messages.push({ role: 'assistant', content: response })
+    addToContext({ role: 'assistant', content: response })
     console.debug('response', response)
 
     let halt = response.length > 0
@@ -184,9 +202,10 @@ Plain text, omit newlines.
             halt = false
             switch (call.function.name) {
                 case 'exec': {
+                    statusText.content = 'executing'
                     const cmd = JSON.parse(call.function.arguments).expression
                     const out = await skill.exec(cmd)
-                    messages.push({
+                    addToContext({
                         role: 'system',
                         content:
                             out.length === 0
@@ -198,10 +217,11 @@ Plain text, omit newlines.
                     break
                 }
                 case 'reason': {
+                    statusText.content = 'reasoning'
                     const prompt = JSON.parse(call.function.arguments).prompt
                     const out = await skill.reason(prompt)
                     console.debug('reason', out)
-                    messages.push({
+                    addToContext({
                         role: 'system',
                         content:
                             out.length === 0
@@ -277,8 +297,7 @@ renderer.keyInput.on('keypress', key => {
 const root = new BoxRenderable(renderer, {
     flexDirection: 'column',
     width: '100%',
-    height: '100%',
-    gap: 1
+    height: '100%'
 })
 renderer.root.add(root)
 
@@ -298,7 +317,8 @@ root.add(contentBox)
 
 const inputBox = new BoxRenderable(renderer, {
     width: '100%',
-    flexDirection: 'row'
+    flexDirection: 'row',
+    paddingTop: 1
 })
 root.add(inputBox)
 inputBox.add(new TextRenderable(renderer, { content: '> ', fg: color.user }))
@@ -313,12 +333,29 @@ const textarea = new TextareaRenderable(renderer, {
     onSubmit: async () => {
         const text = textarea.plainText
         if (text.length === 0) return
-        messages.push({ role: 'user', content: text })
-        contentBox.add(new TextRenderable(renderer, { content: text, fg: color.user }))
+        addToContext({ role: 'user', content: text })
+        contentBox.add(new TextRenderable(renderer, { content: `> ${text}`, fg: color.user }))
         textarea.clear()
         await sendPrompt()
+        statusText.content = 'idle'
     }
 })
 textarea.focus()
 inputBox.add(textarea)
+
+const statusLine = new BoxRenderable(renderer, {
+    width: '100%',
+    flexDirection: 'row',
+    gap: 1
+})
+root.add(statusLine)
+
+const statusText = new TextRenderable(renderer, { width: 10, content: 'idle' })
+statusLine.add(statusText)
+
+statusLine.add(new TextRenderable(renderer, { content: model }))
+
+const contextSizeText = new TextRenderable(renderer, { width: 7, content: formatBytes(contextSize()) })
+statusLine.add(contextSizeText)
+
 renderer.intermediateRender()
