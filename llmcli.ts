@@ -94,6 +94,14 @@ const addToContext = (message: ChatCompletionMessageParam) => {
     contextSizeText.content = formatBytes(contextSize())
 }
 
+const truncate = (out: string, maxSize: number) => {
+    return out.length === 0
+        ? 'EMPTY'
+        : out.length > maxSize
+            ? `TRUNCATED (${maxSize}/${out.length})B ${out.slice(0, maxSize)}`
+            : out
+}
+
 const sendPrompt = async () => {
     statusText.content = 'loading'
     const stream = await client.chat.completions.create({
@@ -205,15 +213,7 @@ Plain text, omit newlines.
                     statusText.content = 'executing'
                     const cmd = JSON.parse(call.function.arguments).expression
                     const out = await skill.exec(cmd)
-                    addToContext({
-                        role: 'system',
-                        content:
-                            out.length === 0
-                                ? 'EMPTY'
-                                : out.length > maxStdoutSize
-                                    ? `TRUNCATED (${maxStdoutSize}/${out.length})B ${out.slice(0, maxStdoutSize)}`
-                                    : out
-                    })
+                    addToContext({ role: 'system', content: truncate(out, maxStdoutSize) })
                     break
                 }
                 case 'reason': {
@@ -221,15 +221,7 @@ Plain text, omit newlines.
                     const prompt = JSON.parse(call.function.arguments).prompt
                     const out = await skill.reason(prompt)
                     console.debug('reason', out)
-                    addToContext({
-                        role: 'system',
-                        content:
-                            out.length === 0
-                                ? 'EMPTY'
-                                : out.length > maxReasonSize
-                                    ? `TRUNCATED (${maxReasonSize}/${out.length})B ${out.slice(0, maxReasonSize)}`
-                                    : out
-                    })
+                    addToContext({ role: 'system', content: truncate(out, maxReasonSize) })
                     break
                 }
                 default: {
