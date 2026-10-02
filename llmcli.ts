@@ -41,13 +41,17 @@ const skill = {
     reason: async (prompt: string) => {
         console.debug('reason prompt', prompt)
         const system = `\
-You are a subagent providing critical thinking and reasoning capability.
+You are a SUBAGENT providing critical thinking and reasoning, given PROMPT by USER.
 Output in plain text, omit newlines.
-Decompose the problem into chunks that need concrete answers.
-Suggest ways to gather more information about the problem using terminal commands.
-Question every statement beyond common sense, especially those that lose accuracy with time.
 Respond in plain text.
-Respond as what AGENT should do to get closer to solving the problem.
+Good response can include:
+  - critical thinking questions that need to be addressed
+  - ways to gather more information to build a full picture using terminal commands
+Question every statement beyond common sense, especially those that lose accuracy with time.
+Respond as what USER should do to get closer to solving the problem.
+Do not decompose the problem if decompositon is already present in PROMPT.
+Do not copy information already present in PROMPT.
+Use concise language.
 Responses over ${maxReasonSize} bytes will be truncated.
 `
         const stream = await client.chat.completions.create({
@@ -145,7 +149,9 @@ AGENT must extensively use it for:
                     name: 'reason',
                     description: `\
 Provides reasoning capabilities.
-Must be used until clear and complete answer to the problem of USER is present in context.
+Use for:
+  - problem decomposition into smaller tasks
+  - problem space exploration
 `,
                     parameters: {
                         type: 'object',
@@ -153,7 +159,8 @@ Must be used until clear and complete answer to the problem of USER is present i
                             prompt: {
                                 type: 'string',
                                 description: `\
-Descriptive problem statement that needs clarification, decomposition, critical view.
+Small piece of context that needs clarification, decomposition, critical view.
+Format prompt as it is your own question.
 Plain text, omit newlines.
 `
                             }
@@ -238,15 +245,19 @@ const spawnTimeoutMs = 10000
 const agentInstructions = `\
 You are an autonomous AGENT.
 Today is ${new Date()}.
-AGENT must:
-  - not write final answer without having factual proof for every statement.
-  - thoroughly search the web at all times.
-  - not rely on training knowledge without verifying it externally.
-  - always use "reason" skill immediately after USER message.
-  - always use "reason" skill right before giving answer to USER.
-  - use "reason" skill until full clear answer to the problem is obvious.
-  - use "exec" skill to utilize full advantage from having internet and unbounded terminal access.
-  - not give up on failures to get to answers quickly, must iterate using tools.
+AGENT must not write final answer without having factual proof for every statement.
+AGENT must thoroughly search the web at all times.
+AGENT must not guess, only output statements confirmed externally.
+AGENT must use "reason" skill until clear and complete answer to the problem of USER is obvious from context.
+AGENT must use "reason" skill immediately after USER message.
+AGENT must use "reason" skill right before giving answer to USER.
+AGENT must use "reason" skill until full clear answer to the problem is obvious.
+AGENT must not use "reason" skill with the same prompt more than once.
+AGENT must not use "reason" skill for already received information.
+AGENT must use "exec" skill to utilize full advantage from having internet and unbounded terminal access.
+AGENT must be very eager to use "exec" skill.
+AGENT must not give up on failures to get to answers quickly, iterate using all available tools.
+When faced with contradicting information, AGENT must additionally vefiry it before answering to USER.
 `
 const systemInstructions = (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/instructions.md`)).toString().trim()
 const messages: ChatCompletionMessageParam[] = [
