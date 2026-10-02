@@ -14,7 +14,7 @@ import { OpenAI } from 'openai'
 import type { ChatCompletionChunk, ChatCompletionMessageParam } from 'openai/resources'
 import { env, stdin, stdout } from 'process'
 
-const skill = {
+const tool = {
     exec: async (cmd: string) => {
         contentBox.add(new TextRenderable(renderer, { content: `$ ${cmd}`, fg: color.cmd }))
         console.debug('cmd', cmd)
@@ -35,9 +35,11 @@ const skill = {
             out = `${out}\nTIMEOUT`
         } else {
             console.debug('cmd output', out)
-            contentBox.add(new TextRenderable(renderer, { content: `${out.length}B command output`, fg: color.cmd }))
+            contentBox.add(
+                new TextRenderable(renderer, { content: `${formatBytes(out.length)} command output`, fg: color.cmd })
+            )
         }
-        return out
+        return out.length > 0 ? out : 'EMPTY'
     },
     reason: async (prompt: string) => {
         console.debug('reason prompt', prompt)
@@ -122,6 +124,10 @@ Answer quality metrics:
   - answer has no factual contradictions in the context
 Be strict and unforgiving, respecting every relevant metric in the rating.
 Slightest inaccuracies must affect the rating.
+Scale:
+  - 0.0 bad answer, off-topic, no references, hallucinations
+  - 0.5 incomplete or contradicting information, no references, bad autonomy
+  - 1.0 direct to the point, multiple references, extensive use of tools, clear chain of thought
 Exceptions:
   - rate as 1 if answer is soley asking user for clarification
 `
@@ -155,13 +161,16 @@ Execute a bash command and read output
 All commands are executed in a persistent sandbox Alpine Linux docker environment with internet access.
 Command output (stdout+stderr) will be piped back to AGENT.
 Command output back to AGENT will be truncated to ${maxStdoutSize} bytes
-Command executing over ${spawnTimeoutMs}ms will be terminated, AGENT will receive \`TIMEOUT\`.
+Command exiting without output -> will respond \`EMPTY\`.
+Command executing over ${spawnTimeoutMs}ms will be terminated -> will respond \`TIMEOUT\`.
 Must be extensively used for:
   - reading offline info: cat, ls, etc.
   - reading online info: curl, google-chrome, playwright, etc.
   - reading current date and time
   - finding location
   - writing programming scripts
+  - installing software
+Any other use case is welcome.
 `,
                         parameters: {
                             type: 'object',
@@ -251,20 +260,20 @@ Plain text, omit newlines.
                     case 'exec': {
                         statusText.content = 'executing'
                         const cmd = JSON.parse(call.function.arguments).expression
-                        const out = await skill.exec(cmd)
-                        addToContext({ role: 'system', content: `$ ${cmd}\n${truncate(out, maxReasonSize)}` })
+                        const out = await tool.exec(cmd)
+                        addToContext({ role: 'assistant', content: `$ ${cmd}\n${truncate(out, maxReasonSize)}` })
                         break
                     }
                     case 'reason': {
                         statusText.content = 'reasoning'
                         const prompt = JSON.parse(call.function.arguments).prompt
-                        const out = await skill.reason(prompt)
+                        const out = await tool.reason(prompt)
                         console.debug('reason', out)
                         addToContext({ role: 'assistant', content: truncate(out, maxReasonSize) })
                         break
                     }
                     default: {
-                        console.warn('unknown skill', call.function.name)
+                        console.warn('unknown tool', call.function.name)
                     }
                 }
             }
@@ -275,8 +284,8 @@ Plain text, omit newlines.
                 return
             } else {
                 addToContext({
-                    role: 'assistant',
-                    content: `Answer is not good enough, ${(rate.rating * 100).toFixed()}%, try harder.\n${rate.reason}`
+                    role: 'system',
+                    content: `Answer is not good enough, ${(rate.rating * 100).toFixed()}%.\n${rate.reason}`
                 })
             }
         }
@@ -296,17 +305,17 @@ You must not rely on internal training data, rather verify every statement exter
 You must not write final answer without having factual proof for every statement.
 You must provide references (links) to every statement in the final answer.
 You must not guess, only output statements confirmed externally.
-You must use "reason" skill until clear and complete answer to the problem of the user is obvious from context.
-You must use "reason" skill until full clear answer to the problem is obvious.
-You must not use "reason" skill with the same prompt more than once.
-You must not use "reason" skill for already received information.
-You must use "exec" skill to utilize full advantage from having internet and unbounded terminal access.
-You must use "exec" skill thoroughly search the web at all times.
-You must use "exec" skill after "reason" skill with a relevant commands.
-You must not give up on failures to get to answers quickly, iterate using all available tools.
+You must not give up on failures, iterate using all available tools.
+"reason" tool:
+  - not use with the same prompt more than once.
+  - not use for already received information.
+"exec" tool:
+  - use to utilize full advantage from having internet and unbounded terminal access.
+  - use thoroughly search the web at all times.
+  - use after "reason" with a relevant commands.
+  - when last "reason" response contained commands to execute, use "exec" for every command to do so.
 When searching the web, always check multiple sources.
-When faced with contradicting information, you must additionally vefiry it before answering to the user.
-When last "reason" skill response contained commands to execute, use "exec" skill to do so.
+When faced with contradicting information in any form, additionally vefiry it.
 `
 const systemInstructions = (await readFile(`${env.XDG_CONFIG_HOME}/llmcli/instructions.md`)).toString().trim()
 const messages: ChatCompletionMessageParam[] = [
