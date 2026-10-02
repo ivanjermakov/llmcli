@@ -16,7 +16,7 @@ import { env, stdin, stdout } from 'process'
 
 const skill = {
     exec: async (cmd: string) => {
-        contentBox.add(new TextRenderable(renderer, { content: `$ ${cmd}`, fg: color.status }))
+        contentBox.add(new TextRenderable(renderer, { content: `$ ${cmd}`, fg: color.cmd }))
         console.debug('cmd', cmd)
         const timeout = new Promise<string>(done => setTimeout(() => done('timeout'), spawnTimeoutMs))
         const child = spawn('docker', ['exec', 'llmcli-sandbox', '/bin/sh', '-c', cmd], {
@@ -31,10 +31,10 @@ const skill = {
             console.warn('cmd timed out')
             child.kill(9)
             await exited
-            contentBox.add(new TextRenderable(renderer, { content: `killed`, fg: color.status }))
+            contentBox.add(new TextRenderable(renderer, { content: `killed`, fg: color.cmd }))
         } else {
             console.debug('cmd output', out)
-            contentBox.add(new TextRenderable(renderer, { content: `${out.length}B command output`, fg: color.status }))
+            contentBox.add(new TextRenderable(renderer, { content: `${out.length}B command output`, fg: color.cmd }))
         }
         return out
     },
@@ -58,10 +58,7 @@ Responses over ${maxReasonSize} bytes will be truncated.
             ],
             stream: true
         })
-        const r = new TextRenderable(renderer, {
-            fg: color.status,
-            content: prompt
-        })
+        const r = new TextRenderable(renderer, { content: prompt, fg: color.reason })
         contentBox.add(r)
 
         let out = ''
@@ -213,7 +210,7 @@ Plain text, omit newlines.
                     statusText.content = 'executing'
                     const cmd = JSON.parse(call.function.arguments).expression
                     const out = await skill.exec(cmd)
-                    addToContext({ role: 'system', content: truncate(out, maxStdoutSize) })
+                    addToContext({ role: 'system', content: `$ ${cmd}\n${truncate(out, maxReasonSize)}` })
                     break
                 }
                 case 'reason': {
@@ -221,7 +218,7 @@ Plain text, omit newlines.
                     const prompt = JSON.parse(call.function.arguments).prompt
                     const out = await skill.reason(prompt)
                     console.debug('reason', out)
-                    addToContext({ role: 'system', content: truncate(out, maxReasonSize) })
+                    addToContext({ role: 'assistant', content: truncate(out, maxReasonSize) })
                     break
                 }
                 default: {
@@ -265,6 +262,8 @@ const client = new OpenAI({
 
 const color = {
     status: RGBA.fromIndex(7),
+    cmd: RGBA.fromIndex(7),
+    reason: RGBA.fromIndex(7),
     user: RGBA.fromIndex(3)
 }
 
@@ -322,6 +321,9 @@ const textarea = new TextareaRenderable(renderer, {
         { ctrl: true, name: 'j', action: 'newline' }
     ],
     textColor: color.user,
+    onContentChange: () => {
+        renderer.intermediateRender()
+    },
     onSubmit: async () => {
         const text = textarea.plainText
         if (text.length === 0) return
