@@ -188,7 +188,7 @@ const tryHarder = async () => {
 When asked to rate the answer, rate the quality of the final answer given by agent in range 0 to 1 as a float.
 Output a single number on the first line of the response.
 If rating is not 1.0, also provide reasons for such rating.
-Never give answers to the actual user's problem in reasons.
+Don't say anything about the problem specifics.
 Answer quality metrics:
   - gives exact solution to the problem
   - has verifiable proofs
@@ -199,7 +199,7 @@ Answer quality metrics:
 Be strict and unforgiving, respecting every relevant metric in the rating.
 Slightest inaccuracies must affect the rating.
 Scale:
-  - 0.0 bad answer, off-topic, no references, hallucinations
+  - 0.0 bad answer, off-topic, no references, contradictions
   - 0.5 incomplete or contradicting information, no references, bad autonomy
   - 1.0 direct to the point, multiple references, extensive use of tools, clear chain of thought
 Exceptions:
@@ -207,7 +207,11 @@ Exceptions:
 `
     const response = await client.chat.completions.create({
         model,
-        messages: [{ role: 'system', content: system }, ...messages, { role: 'system', content: 'Rate the answer' }]
+        messages: [
+            { role: 'system', content: system },
+            ...messages.filter(m => m.role !== 'system'),
+            { role: 'system', content: 'Rate the answer' }
+        ]
     })
     const out = response.choices[0].message.content ?? 'N/A'
     contentBox.add(new TextRenderable(renderer, { content: `rating: ${out}`, fg: color.reason }))
