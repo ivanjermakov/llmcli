@@ -283,7 +283,7 @@ const sendPrompt = async () => {
                         const prompt = JSON.parse(call.function.arguments).prompt
                         const out = await tool.reason.run(prompt)
                         console.debug('reason', out)
-                        addToContext({ role: 'assistant', content: truncate(out, maxReasonSize) })
+                        addToContext({ role: 'assistant', content: `REASONING:\n${truncate(out, maxReasonSize)}` })
                         break
                     }
                     default: {
@@ -310,15 +310,15 @@ const sendPrompt = async () => {
 const agentInstructions = `\
 You are an autonomous agent.
 Today is ${new Date()}.
-You must not rely on internal training data, every statement must be verified externally.
-You must not give up on failures, iterate using all available tools.
+Do not rely on internal training data, every statement must be verified externally.
+Do not give up on failures, iterate using all available tools.
 "reason" tool:
   - not use with the same prompt more than once.
   - not use for already received information.
 "exec" tool:
   - use to utilize full advantage from having internet and unbounded terminal access.
   - use thoroughly search the web at all times.
-  - use after "reason" with a relevant commands.
+  - use after "reason" tool with relevant commands.
   - when last "reason" response contained commands to execute, use "exec" for every command to do so.
 When searching the web, always check multiple sources.
 When faced with contradicting information in any form, additionally vefiry it.
